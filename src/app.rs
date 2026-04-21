@@ -50,8 +50,10 @@ impl eframe::App for App {
         egui::Panel::left("scene_panel")
             .resizable(true)
             .show_inside(ui, |ui| {
-                ui.heading("Scene Node");
-                ui.label("Model 1");
+                egui::ScrollArea::both().show(ui, |ui| {
+                    ui.heading("Scene Node");
+                    ui.label("Model 1: Super_long_filename_that_normally_breaks_layout.gltf");
+                });
             });
 
         egui::Panel::right("inspector_panel")
@@ -63,6 +65,7 @@ impl eframe::App for App {
 
         egui::Panel::bottom("console_panel")
             .resizable(true)
+            .size_range(100.0..=200.0)
             .show_inside(ui, |ui| {
                 ui.label("System loaded successfully.");
             });
