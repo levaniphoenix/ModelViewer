@@ -2,13 +2,28 @@ use eframe::{
     egui::{self, PaintCallbackInfo},
     wgpu,
 };
-use eframe::wgpu::ShaderModuleDescriptor;
 use egui_wgpu::{CallbackResources, CallbackTrait};
+use crate::camera::CameraUniform;
 use crate::renderer::Resources;
 
 struct ViewportCallback;
 
 impl CallbackTrait for ViewportCallback {
+    fn prepare(
+        &self,
+        _device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        _screen_descriptor: &egui_wgpu::ScreenDescriptor,
+        _encoder: &mut wgpu::CommandEncoder,
+        resources: &mut CallbackResources,
+    ) -> Vec<wgpu::CommandBuffer> {
+        let res = resources.get::<Resources>().unwrap();
+
+        let camera_uniform = CameraUniform::new(&res.camera); // see step 2
+        queue.write_buffer(&res.uniform_buffer, 0, bytemuck::cast_slice(&[camera_uniform]));
+
+        Vec::new()
+    }
     fn paint(
         &self,
         info: PaintCallbackInfo,
@@ -18,7 +33,7 @@ impl CallbackTrait for ViewportCallback {
         let res = resources.get::<Resources>().unwrap();
         render_pass.set_pipeline(&res.pipeline);
         render_pass.set_bind_group(0, &res.uniform_buffer_bind_group, &[]);
-        render_pass.draw(0..3, 0..1);
+        render_pass.draw(0..36, 0..1);
     }
 }
 

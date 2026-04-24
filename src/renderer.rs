@@ -12,6 +12,7 @@ pub struct Resources{
     pub pipeline : RenderPipeline,
     pub uniform_buffer : wgpu::Buffer,
     pub uniform_buffer_bind_group : wgpu::BindGroup,
+    pub  camera : Camera,
 }
 
 impl Resources{
@@ -90,6 +91,6 @@ impl Resources{
             cache: None,
             multiview_mask: None,
         });
-        Self{shader,pipeline, uniform_buffer, uniform_buffer_bind_group}
+        Self{shader,pipeline, uniform_buffer, uniform_buffer_bind_group, camera}
     }
 }
