@@ -5,7 +5,7 @@ use eframe::{
 use egui_wgpu::{CallbackResources, CallbackTrait};
 use crate::camera::CameraUniform;
 use crate::mesh::{AlphaMode, LineVertex, Material, MeshPrimitive, SceneNode, SceneTree};
-use crate::renderer::Resources;
+use crate::renderer::{MaterialUniform, Resources};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum LeftPanelTab {
@@ -20,6 +20,7 @@ struct ViewportCallback {
     radius: f32,
     aspect: f32,
     show_bones: bool,
+    material_colors: Vec<[f32; 4]>,
 }
 
 impl CallbackTrait for ViewportCallback {
@@ -38,6 +39,15 @@ impl CallbackTrait for ViewportCallback {
         let camera_uniform = CameraUniform::new(&res.camera);
         queue.write_buffer(&res.uniform_buffer, 0, bytemuck::cast_slice(&[camera_uniform]));
 
+        for (i, color) in self.material_colors.iter().enumerate() {
+            if let Some(mat) = res.materials.get(i) {
+                queue.write_buffer(
+                    &mat.buffer, 0,
+                    bytemuck::cast_slice(&[MaterialUniform { base_color: *color }]),
+                );
+            }
+        }
+
         Vec::new()
     }
 
@@ -55,6 +65,10 @@ impl CallbackTrait for ViewportCallback {
 
         render_pass.set_pipeline(&res.pipeline);
         for prim in &res.primitives {
+            let mat = prim.material
+                .and_then(|i| res.materials.get(i))
+                .unwrap_or(&res.default_material);
+            render_pass.set_bind_group(1, &mat.bind_group, &[]);
             render_pass.set_vertex_buffer(0, prim.vertex_buffer.slice(..));
             render_pass.set_index_buffer(prim.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
             render_pass.draw_indexed(0..prim.index_count, 0, 0..1);
@@ -99,7 +113,10 @@ impl App {
 
         let render_state = cc.wgpu_render_state.as_ref().unwrap();
         let device = &render_state.device;
-        let res = Resources::new(device, render_state.target_format.into(), mesh_primitives, bones);
+        let res = Resources::new(
+            device, render_state.target_format.into(),
+            mesh_primitives, bones, &materials,
+        );
         render_state.renderer.write().callback_resources.insert(res);
         Self {
             roughness: 0.0,
@@ -138,6 +155,7 @@ impl App {
                 radius: self.radius,
                 aspect: rect.width() / rect.height(),
                 show_bones: self.show_bones,
+                material_colors: self.materials.iter().map(|m| m.base_color).collect(),
             },
         ));
     }
@@ -174,7 +192,7 @@ impl eframe::App for App {
                 ui.separator();
                 egui::ScrollArea::vertical().show(ui, |ui| {
                     if self.left_tab == LeftPanelTab::Materials {
-                        match self.selected_material.and_then(|i| self.materials.get(i)) {
+                        match self.selected_material.and_then(|i| self.materials.get_mut(i)) {
                             Some(mat) => show_material_inspector(ui, mat),
                             None => { ui.weak("Select a material"); }
                         }
@@ -271,22 +289,14 @@ fn show_materials_tab(
     }
 }
 
-fn show_material_inspector(ui: &mut egui::Ui, mat: &Material) {
+fn show_material_inspector(ui: &mut egui::Ui, mat: &mut Material) {
     ui.strong(&mat.name);
     ui.separator();
 
     let swatch_size = egui::vec2(32.0, 18.0);
     egui::Grid::new("material_props").num_columns(2).striped(true).show(ui, |ui| {
         ui.label("Base color");
-        let c = mat.base_color;
-        egui::color_picker::show_color(
-            ui,
-            egui::Color32::from_rgba_unmultiplied(
-                (c[0] * 255.0) as u8, (c[1] * 255.0) as u8,
-                (c[2] * 255.0) as u8, (c[3] * 255.0) as u8,
-            ),
-            swatch_size,
-        );
+        ui.color_edit_button_rgba_unmultiplied(&mut mat.base_color);
         ui.end_row();
 
         ui.label("Metallic");

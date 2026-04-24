@@ -8,12 +8,24 @@ use eframe::wgpu::{
 use eframe::wgpu::util::{BufferInitDescriptor, DeviceExt};
 use glam::Vec3;
 use crate::camera::{Camera, CameraUniform};
-use crate::mesh::{build_grid, LineVertex, MeshPrimitive, Vertex};
+use crate::mesh::{build_grid, LineVertex, Material, MeshPrimitive, Vertex};
+
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct MaterialUniform {
+    pub base_color: [f32; 4],
+}
+
+pub struct GpuMaterial {
+    pub buffer: wgpu::Buffer,
+    pub bind_group: wgpu::BindGroup,
+}
 
 pub struct GpuPrimitive {
     pub vertex_buffer: wgpu::Buffer,
     pub index_buffer: wgpu::Buffer,
     pub index_count: u32,
+    pub material: Option<usize>,
 }
 
 pub struct Resources {
@@ -30,6 +42,8 @@ pub struct Resources {
     pub uniform_buffer_bind_group: wgpu::BindGroup,
     pub camera: Camera,
     pub primitives: Vec<GpuPrimitive>,
+    pub materials: Vec<GpuMaterial>,
+    pub default_material: GpuMaterial,
 }
 
 impl Resources {
@@ -38,6 +52,7 @@ impl Resources {
         target_format: ColorTargetState,
         mesh_primitives: &[MeshPrimitive],
         bones: &[LineVertex],
+        materials: &[Material],
     ) -> Self {
         let shader = device.create_shader_module(ShaderModuleDescriptor {
             label: Some("scene renderer"),
@@ -101,6 +116,51 @@ impl Resources {
             }],
         });
 
+        let material_bind_group_layout = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
+            label: Some("material_bind_group_layout"),
+            entries: &[BindGroupLayoutEntry {
+                binding: 0,
+                visibility: ShaderStages::FRAGMENT,
+                ty: BindingType::Buffer {
+                    ty: BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            }],
+        });
+
+        let make_gpu_material = |label: &str, base_color: [f32; 4]| -> GpuMaterial {
+            let buffer = device.create_buffer_init(&BufferInitDescriptor {
+                label: Some(label),
+                contents: cast_slice(&[MaterialUniform { base_color }]),
+                usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
+            });
+            let bind_group = device.create_bind_group(&BindGroupDescriptor {
+                label: Some(label),
+                layout: &material_bind_group_layout,
+                entries: &[BindGroupEntry {
+                    binding: 0,
+                    resource: buffer.as_entire_binding(),
+                }],
+            });
+            GpuMaterial { buffer, bind_group }
+        };
+
+        let default_material = make_gpu_material("default_material", [0.8, 0.8, 0.8, 1.0]);
+        let gpu_materials: Vec<GpuMaterial> = materials.iter().enumerate()
+            .map(|(i, m)| make_gpu_material(&format!("material_{i}"), m.base_color))
+            .collect();
+
+        let scene_pipeline_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
+            label: Some("scene_pipeline_layout"),
+            bind_group_layouts: &[
+                Some(&uniform_buffer_bind_group_layout),
+                Some(&material_bind_group_layout),
+            ],
+            immediate_size: 0,
+        });
+
         let render_pipeline_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
             label: Some("render_pipeline_layout"),
             bind_group_layouts: &[Some(&uniform_buffer_bind_group_layout)],
@@ -109,7 +169,7 @@ impl Resources {
 
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("scene_renderer_pipeline"),
-            layout: Some(&render_pipeline_layout),
+            layout: Some(&scene_pipeline_layout),
             vertex: wgpu::VertexState {
                 module: &shader,
                 entry_point: Some("vs_main"),
@@ -284,6 +344,7 @@ impl Resources {
                 vertex_buffer,
                 index_buffer,
                 index_count: prim.indices.len() as u32,
+                material: prim.material,
             }
         }).collect();
 
@@ -301,6 +362,8 @@ impl Resources {
             uniform_buffer_bind_group,
             camera,
             primitives,
+            materials: gpu_materials,
+            default_material,
         }
     }
 }

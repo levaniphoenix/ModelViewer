@@ -7,6 +7,13 @@ struct Uniforms {
 @group(0) @binding(0)
 var<uniform> uniforms : Uniforms;
 
+struct Material {
+    base_color : vec4<f32>,
+}
+
+@group(1) @binding(0)
+var<uniform> material : Material;
+
 struct VsOut {
     @builtin(position) position : vec4<f32>,
     @location(0) world_pos : vec3<f32>,
@@ -27,7 +34,7 @@ fn vs_main(
 
 @fragment
 fn fs_main(in : VsOut) -> @location(0) vec4<f32> {
-    let base_color = vec3(0.8, 0.8, 0.8);
+    let base_color = material.base_color.rgb;
     let light_color = vec3(1.0, 1.0, 1.0);
     let light_dir = normalize(vec3(1.0, 1.0, 1.0));
     let ambient_strength = 0.15;
@@ -43,5 +50,5 @@ fn fs_main(in : VsOut) -> @location(0) vec4<f32> {
 
     let color = base_color * (ambient_strength + diffuse * light_color)
               + light_color * specular;
-    return vec4(color, 1.0);
+    return vec4(color, material.base_color.a);
 }

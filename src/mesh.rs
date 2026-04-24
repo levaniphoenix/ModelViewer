@@ -31,6 +31,7 @@ impl Vertex {
 pub struct MeshPrimitive {
     pub vertices: Vec<Vertex>,
     pub indices: Vec<u32>,
+    pub material: Option<usize>,
 }
 
 #[repr(C)]
@@ -117,7 +118,8 @@ pub fn load_gltf(path: &str) -> Vec<MeshPrimitive> {
                 .into_u32()
                 .collect();
 
-            primitives.push(MeshPrimitive { vertices, indices });
+            let material = primitive.material().index();
+            primitives.push(MeshPrimitive { vertices, indices, material });
         }
     }
 
