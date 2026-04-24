@@ -123,3 +123,40 @@ pub fn load_gltf(path: &str) -> Vec<MeshPrimitive> {
 
     primitives
 }
+
+pub struct SceneNode {
+    pub name: String,
+    pub children: Vec<SceneNode>,
+}
+
+pub struct SceneTree {
+    pub scene_name: String,
+    pub roots: Vec<SceneNode>,
+}
+
+pub fn load_scene_tree(path: &str) -> SceneTree {
+    let (gltf, _buffers, _) = gltf::import(path).unwrap();
+    let scene = gltf.default_scene().or_else(|| gltf.scenes().next())
+        .expect("glTF has no scenes");
+    let scene_name = scene.name().unwrap_or("Scene").to_string();
+    let roots = scene.nodes().map(|n| convert_node(&n)).collect();
+    SceneTree { scene_name, roots }
+}
+
+fn convert_node(node: &gltf::Node) -> SceneNode {
+    let name = node.name().unwrap_or("Node").to_string();
+    let mut children: Vec<SceneNode> = node.children().map(|c| convert_node(&c)).collect();
+
+    if let Some(mesh) = node.mesh() {
+        let mesh_name = mesh.name().unwrap_or("Mesh").to_string();
+        let prim_children: Vec<SceneNode> = mesh.primitives().enumerate().map(|(i, prim)| {
+            let prim_name = prim.material().name()
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| format!("Primitive {i}"));
+            SceneNode { name: prim_name, children: Vec::new() }
+        }).collect();
+        children.push(SceneNode { name: mesh_name, children: prim_children });
+    }
+
+    SceneNode { name, children }
+}

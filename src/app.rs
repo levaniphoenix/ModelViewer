@@ -4,8 +4,15 @@ use eframe::{
 };
 use egui_wgpu::{CallbackResources, CallbackTrait};
 use crate::camera::CameraUniform;
-use crate::mesh::MeshPrimitive;
+use crate::mesh::{MeshPrimitive, SceneNode, SceneTree};
 use crate::renderer::Resources;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum LeftPanelTab {
+    Scene,
+    Meshes,
+    Materials,
+}
 
 struct ViewportCallback {
     yaw: f32,
@@ -63,26 +70,28 @@ pub struct App {
     yaw: f32,
     pitch: f32,
     radius: f32,
+    scene_tree: SceneTree,
+    left_tab: LeftPanelTab,
 }
 
-impl Default for App {
-    fn default() -> Self {
+impl App {
+    pub fn new(
+        cc: &eframe::CreationContext<'_>,
+        mesh_primitives: &[MeshPrimitive],
+        scene_tree: SceneTree,
+    ) -> Self {
+        let render_state = cc.wgpu_render_state.as_ref().unwrap();
+        let device = &render_state.device;
+        let res = Resources::new(device, render_state.target_format.into(), mesh_primitives);
+        render_state.renderer.write().callback_resources.insert(res);
         Self {
             roughness: 0.0,
             yaw: 0.0,
             pitch: 0.3,
             radius: 3.0,
+            scene_tree,
+            left_tab: LeftPanelTab::Scene,
         }
-    }
-}
-
-impl App {
-    pub fn new(cc: &eframe::CreationContext<'_>, mesh_primitives: &[MeshPrimitive]) -> Self {
-        let render_state = cc.wgpu_render_state.as_ref().unwrap();
-        let device = &render_state.device;
-        let res = Resources::new(device, render_state.target_format.into(), mesh_primitives);
-        render_state.renderer.write().callback_resources.insert(res);
-        Self::default()
     }
 
     fn render_3d_viewport(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
@@ -119,9 +128,18 @@ impl eframe::App for App {
             .default_size(250.0)
             .size_range(100.0..=500.0)
             .show_inside(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.selectable_value(&mut self.left_tab, LeftPanelTab::Scene, "Scene");
+                    ui.selectable_value(&mut self.left_tab, LeftPanelTab::Meshes, "Meshes");
+                    ui.selectable_value(&mut self.left_tab, LeftPanelTab::Materials, "Materials");
+                });
+                ui.separator();
                 egui::ScrollArea::both().show(ui, |ui| {
-                    ui.heading("Scene Node");
-                    ui.label("Model 1: lumine.glb");
+                    match self.left_tab {
+                        LeftPanelTab::Scene => show_scene_tab(ui, &self.scene_tree),
+                        LeftPanelTab::Meshes => { ui.label("(not implemented yet)"); }
+                        LeftPanelTab::Materials => { ui.label("(not implemented yet)"); }
+                    }
                 });
             });
 
@@ -142,5 +160,30 @@ impl eframe::App for App {
         egui::CentralPanel::default().show_inside(ui, |ui| {
             self.render_3d_viewport(ui, frame);
         });
+    }
+}
+
+fn show_scene_tab(ui: &mut egui::Ui, tree: &SceneTree) {
+    egui::CollapsingHeader::new(&tree.scene_name)
+        .default_open(true)
+        .show(ui, |ui| {
+            for node in &tree.roots {
+                show_node(ui, node);
+            }
+        });
+}
+
+fn show_node(ui: &mut egui::Ui, node: &SceneNode) {
+    if node.children.is_empty() {
+        ui.label(&node.name);
+    } else {
+        egui::CollapsingHeader::new(&node.name)
+            .id_salt(node as *const _ as usize)
+            .default_open(true)
+            .show(ui, |ui| {
+                for child in &node.children {
+                    show_node(ui, child);
+                }
+            });
     }
 }
