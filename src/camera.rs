@@ -24,7 +24,18 @@ impl Camera{
             aspect : 1.0,
         }
     }
-    
+
+    /// Recompute position from orbit angles around `self.target`.
+    /// `yaw` rotates horizontally, `pitch` vertically, `radius` is distance.
+    pub fn orbit(&mut self, yaw: f32, pitch: f32, radius: f32) {
+        let pitch = pitch.clamp(-std::f32::consts::FRAC_PI_2 + 0.01, std::f32::consts::FRAC_PI_2 - 0.01);
+        self.position = self.target + Vec3::new(
+            radius * yaw.sin() * pitch.cos(),
+            radius * pitch.sin(),
+            radius * yaw.cos() * pitch.cos(),
+        );
+    }
+
     pub  fn build_view_projection_matrix(&self) -> Mat4{
         let view = Mat4::look_at_rh(self.position, self.target, self.up);
         let projection = Mat4::perspective_rh(self.fov.to_radians(), self.aspect, self.z_near, self.z_far);

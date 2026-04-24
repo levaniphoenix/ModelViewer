@@ -6,7 +6,12 @@ use egui_wgpu::{CallbackResources, CallbackTrait};
 use crate::camera::CameraUniform;
 use crate::renderer::Resources;
 
-struct ViewportCallback;
+struct ViewportCallback {
+    yaw: f32,
+    pitch: f32,
+    radius: f32,
+    aspect: f32,
+}
 
 impl CallbackTrait for ViewportCallback {
     fn prepare(
@@ -17,16 +22,19 @@ impl CallbackTrait for ViewportCallback {
         _encoder: &mut wgpu::CommandEncoder,
         resources: &mut CallbackResources,
     ) -> Vec<wgpu::CommandBuffer> {
-        let res = resources.get::<Resources>().unwrap();
+        let res = resources.get_mut::<Resources>().unwrap();
+        res.camera.aspect = self.aspect;
+        res.camera.orbit(self.yaw, self.pitch, self.radius);
 
-        let camera_uniform = CameraUniform::new(&res.camera); // see step 2
+        let camera_uniform = CameraUniform::new(&res.camera);
         queue.write_buffer(&res.uniform_buffer, 0, bytemuck::cast_slice(&[camera_uniform]));
 
         Vec::new()
     }
+
     fn paint(
         &self,
-        info: PaintCallbackInfo,
+        _info: PaintCallbackInfo,
         render_pass: &mut wgpu::RenderPass<'static>,
         resources: &CallbackResources,
     ) {
@@ -37,30 +45,58 @@ impl CallbackTrait for ViewportCallback {
     }
 }
 
-#[derive(Default)]
 pub struct App {
     roughness: f32,
+    yaw: f32,
+    pitch: f32,
+    radius: f32,
+}
+
+impl Default for App {
+    fn default() -> Self {
+        Self {
+            roughness: 0.0,
+            yaw: 0.0,
+            pitch: 0.3,  // slight downward angle
+            radius: 3.0,
+        }
+    }
 }
 
 impl App {
-    pub fn new(cc: &eframe::CreationContext<'_>) -> Self { 
+    pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         let render_state = cc.wgpu_render_state.as_ref().unwrap();
-        let device  = &render_state.device;
+        let device = &render_state.device;
         let res = Resources::new(device, render_state.target_format.into());
         render_state.renderer.write().callback_resources.insert(res);
         Self::default()
     }
 
     fn render_3d_viewport(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        let (rect, response) = ui.allocate_exact_size(ui.available_size(), egui::Sense::drag());
+        let (rect, response) =
+            ui.allocate_exact_size(ui.available_size(), egui::Sense::drag());
 
-        // if response.dragged() {
-        //     self.camera.rotate(response.drag_delta());
-        // }
+        // Left drag: orbit
+        if response.dragged() {
+            let delta = response.drag_delta();
+            self.yaw   -= delta.x * 0.01;
+            self.pitch += delta.y * 0.01;
+        }
+
+        // Scroll: zoom
+        if response.hovered() {
+            let scroll = ui.input(|i| i.smooth_scroll_delta.y);
+            self.radius = (self.radius - scroll * 0.01).max(0.5);
+        }
 
         ui.painter().add(egui_wgpu::Callback::new_paint_callback(
             rect,
-            ViewportCallback,
+            ViewportCallback {
+                yaw: self.yaw,
+                pitch: self.pitch,
+                radius: self.radius,
+                aspect: rect.width() / rect.height(),
+            },
         ));
     }
 }
