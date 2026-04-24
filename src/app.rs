@@ -80,6 +80,8 @@ impl App {
         mesh_primitives: &[MeshPrimitive],
         scene_tree: SceneTree,
     ) -> Self {
+        install_cjk_fallback_font(&cc.egui_ctx);
+
         let render_state = cc.wgpu_render_state.as_ref().unwrap();
         let device = &render_state.device;
         let res = Resources::new(device, render_state.target_format.into(), mesh_primitives);
@@ -161,6 +163,33 @@ impl eframe::App for App {
             self.render_3d_viewport(ui, frame);
         });
     }
+}
+
+fn install_cjk_fallback_font(ctx: &egui::Context) {
+    let candidates = [
+        "C:/Windows/Fonts/msyh.ttc",
+        "C:/Windows/Fonts/YuGothM.ttc",
+        "C:/Windows/Fonts/meiryo.ttc",
+        "C:/Windows/Fonts/simsun.ttc",
+        "C:/Windows/Fonts/msgothic.ttc",
+        "/System/Library/Fonts/PingFang.ttc",
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+    ];
+
+    let Some(bytes) = candidates.iter().find_map(|p| std::fs::read(p).ok()) else {
+        return;
+    };
+
+    let mut fonts = egui::FontDefinitions::default();
+    fonts.font_data.insert(
+        "cjk".to_owned(),
+        std::sync::Arc::new(egui::FontData::from_owned(bytes)),
+    );
+    for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
+        fonts.families.entry(family).or_default().push("cjk".to_owned());
+    }
+    ctx.set_fonts(fonts);
 }
 
 fn show_scene_tab(ui: &mut egui::Ui, tree: &SceneTree) {
