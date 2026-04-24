@@ -6,6 +6,7 @@ use eframe::wgpu::{
     RenderPipeline, ShaderModule, ShaderModuleDescriptor, ShaderStages,
 };
 use eframe::wgpu::util::{BufferInitDescriptor, DeviceExt};
+use glam::Vec3;
 use crate::camera::{Camera, CameraUniform};
 use crate::mesh::{MeshPrimitive, Vertex};
 
@@ -31,9 +32,24 @@ impl Resources {
             source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/scene.wgsl").into()),
         });
 
+        let mut bb_min = Vec3::splat(f32::INFINITY);
+        let mut bb_max = Vec3::splat(f32::NEG_INFINITY);
+        for prim in mesh_primitives {
+            for v in &prim.vertices {
+                let p = Vec3::from(v.position);
+                bb_min = bb_min.min(p);
+                bb_max = bb_max.max(p);
+            }
+        }
+        let target = if bb_min.is_finite() && bb_max.is_finite() {
+            (bb_min + bb_max) * 0.5
+        } else {
+            Vec3::ZERO
+        };
+
         let camera = Camera {
-            position: (0.0, 1.0, 2.0).into(),
-            target: (0.0, 0.0, 0.0).into(),
+            position: target + Vec3::new(0.0, 1.0, 2.0),
+            target,
             rotation: Default::default(),
             up: (0.0, 1.0, 0.0).into(),
             fov: 45.0,
@@ -100,7 +116,13 @@ impl Resources {
                 cull_mode: None, // no culling for now so we see everything
                 ..Default::default()
             },
-            depth_stencil: None,
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: wgpu::TextureFormat::Depth32Float,
+                depth_write_enabled: Some(true),
+                depth_compare: Some(wgpu::CompareFunction::Less),
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            }),
             multisample: wgpu::MultisampleState::default(),
             cache: None,
             multiview_mask: None,

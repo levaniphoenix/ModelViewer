@@ -6,9 +6,7 @@ fn main() -> eframe::Result<()> {
     println!("Loaded {} primitives", primitives.len());
 
     let options = eframe::NativeOptions {
-        wgpu_options: egui_wgpu::WgpuConfiguration {
-            ..Default::default()
-        },
+        depth_buffer: 32,
         ..Default::default()
     };
     eframe::run_native(
