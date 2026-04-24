@@ -4,7 +4,7 @@ use eframe::{
 };
 use egui_wgpu::{CallbackResources, CallbackTrait};
 use crate::camera::CameraUniform;
-use crate::mesh::{MeshPrimitive, SceneNode, SceneTree};
+use crate::mesh::{LineVertex, MeshPrimitive, SceneNode, SceneTree};
 use crate::renderer::Resources;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -19,6 +19,7 @@ struct ViewportCallback {
     pitch: f32,
     radius: f32,
     aspect: f32,
+    show_bones: bool,
 }
 
 impl CallbackTrait for ViewportCallback {
@@ -62,6 +63,14 @@ impl CallbackTrait for ViewportCallback {
         render_pass.set_pipeline(&res.grid_pipeline);
         render_pass.set_vertex_buffer(0, res.grid_vertex_buffer.slice(..));
         render_pass.draw(0..res.grid_vertex_count, 0..1);
+
+        if self.show_bones && res.bone_vertex_count > 0 {
+            if let Some(buf) = &res.bone_vertex_buffer {
+                render_pass.set_pipeline(&res.bone_pipeline);
+                render_pass.set_vertex_buffer(0, buf.slice(..));
+                render_pass.draw(0..res.bone_vertex_count, 0..1);
+            }
+        }
     }
 }
 
@@ -72,19 +81,22 @@ pub struct App {
     radius: f32,
     scene_tree: SceneTree,
     left_tab: LeftPanelTab,
+    show_bones: bool,
+    has_bones: bool,
 }
 
 impl App {
     pub fn new(
         cc: &eframe::CreationContext<'_>,
         mesh_primitives: &[MeshPrimitive],
+        bones: &[LineVertex],
         scene_tree: SceneTree,
     ) -> Self {
         install_cjk_fallback_font(&cc.egui_ctx);
 
         let render_state = cc.wgpu_render_state.as_ref().unwrap();
         let device = &render_state.device;
-        let res = Resources::new(device, render_state.target_format.into(), mesh_primitives);
+        let res = Resources::new(device, render_state.target_format.into(), mesh_primitives, bones);
         render_state.renderer.write().callback_resources.insert(res);
         Self {
             roughness: 0.0,
@@ -93,6 +105,8 @@ impl App {
             radius: 3.0,
             scene_tree,
             left_tab: LeftPanelTab::Scene,
+            show_bones: false,
+            has_bones: !bones.is_empty(),
         }
     }
 
@@ -118,6 +132,7 @@ impl App {
                 pitch: self.pitch,
                 radius: self.radius,
                 aspect: rect.width() / rect.height(),
+                show_bones: self.show_bones,
             },
         ));
     }
@@ -149,7 +164,14 @@ impl eframe::App for App {
             .resizable(true)
             .show_inside(ui, |ui| {
                 ui.heading("Properties");
-                ui.add(egui::Slider::new(&mut self.roughness, 0.0..=1.0).text("Roughness"));
+                ui.separator();
+                ui.add_enabled(
+                    self.has_bones,
+                    egui::Checkbox::new(&mut self.show_bones, "Show bones"),
+                );
+                if !self.has_bones {
+                    ui.weak("(no skin in this glTF)");
+                }
             });
 
         egui::Panel::bottom("console_panel")

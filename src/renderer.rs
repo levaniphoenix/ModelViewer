@@ -23,6 +23,9 @@ pub struct Resources {
     pub grid_pipeline: RenderPipeline,
     pub grid_vertex_buffer: wgpu::Buffer,
     pub grid_vertex_count: u32,
+    pub bone_pipeline: RenderPipeline,
+    pub bone_vertex_buffer: Option<wgpu::Buffer>,
+    pub bone_vertex_count: u32,
     pub uniform_buffer: wgpu::Buffer,
     pub uniform_buffer_bind_group: wgpu::BindGroup,
     pub camera: Camera,
@@ -30,7 +33,12 @@ pub struct Resources {
 }
 
 impl Resources {
-    pub fn new(device: &wgpu::Device, target_format: ColorTargetState, mesh_primitives: &[MeshPrimitive]) -> Self {
+    pub fn new(
+        device: &wgpu::Device,
+        target_format: ColorTargetState,
+        mesh_primitives: &[MeshPrimitive],
+        bones: &[LineVertex],
+    ) -> Self {
         let shader = device.create_shader_module(ShaderModuleDescriptor {
             label: Some("scene renderer"),
             source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/scene.wgsl").into()),
@@ -193,7 +201,7 @@ impl Resources {
             fragment: Some(wgpu::FragmentState {
                 module: &grid_shader,
                 entry_point: Some("fs_main"),
-                targets: &[Some(target_format)],
+                targets: &[Some(target_format.clone())],
                 compilation_options: Default::default(),
             }),
             primitive: wgpu::PrimitiveState {
@@ -211,6 +219,55 @@ impl Resources {
             cache: None,
             multiview_mask: None,
         });
+
+        let bone_shader = device.create_shader_module(ShaderModuleDescriptor {
+            label: Some("bone shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/bone.wgsl").into()),
+        });
+
+        let bone_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("bone_pipeline"),
+            layout: Some(&render_pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &bone_shader,
+                entry_point: Some("vs_main"),
+                buffers: &[LineVertex::buffer_layout()],
+                compilation_options: Default::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &bone_shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(target_format)],
+                compilation_options: Default::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::LineList,
+                ..Default::default()
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: wgpu::TextureFormat::Depth32Float,
+                depth_write_enabled: Some(false),
+                depth_compare: Some(wgpu::CompareFunction::Always),
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            }),
+            multisample: wgpu::MultisampleState::default(),
+            cache: None,
+            multiview_mask: None,
+        });
+
+        let (bone_vertex_buffer, bone_vertex_count) = if bones.is_empty() {
+            (None, 0u32)
+        } else {
+            (
+                Some(device.create_buffer_init(&BufferInitDescriptor {
+                    label: Some("bone_vertex_buffer"),
+                    contents: cast_slice(bones),
+                    usage: BufferUsages::VERTEX,
+                })),
+                bones.len() as u32,
+            )
+        };
 
         let primitives: Vec<GpuPrimitive> = mesh_primitives.iter().map(|prim| {
             let vertex_buffer = device.create_buffer_init(&BufferInitDescriptor {
@@ -237,6 +294,9 @@ impl Resources {
             grid_pipeline,
             grid_vertex_buffer,
             grid_vertex_count,
+            bone_pipeline,
+            bone_vertex_buffer,
+            bone_vertex_count,
             uniform_buffer,
             uniform_buffer_bind_group,
             camera,

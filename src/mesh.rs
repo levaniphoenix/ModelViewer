@@ -134,6 +134,76 @@ pub struct SceneTree {
     pub roots: Vec<SceneNode>,
 }
 
+/// Returns a world-space line list tracing the edges of Blender-style
+/// octahedral bone shapes — 12 edges per joint → child-joint pair.
+/// Empty when the file has no skins.
+pub fn load_bones(path: &str) -> Vec<LineVertex> {
+    let (gltf, _buffers, _) = gltf::import(path).unwrap();
+    let mut world: Vec<Option<glam::Mat4>> = vec![None; gltf.nodes().count()];
+    let scene = gltf.default_scene().or_else(|| gltf.scenes().next())
+        .expect("glTF has no scenes");
+    for root in scene.nodes() {
+        accumulate_world(&root, glam::Mat4::IDENTITY, &mut world);
+    }
+
+    let mut verts = Vec::new();
+    for skin in gltf.skins() {
+        let joint_set: std::collections::HashSet<usize> =
+            skin.joints().map(|j| j.index()).collect();
+        for joint in skin.joints() {
+            let Some(parent_w) = world[joint.index()] else { continue };
+            let head = parent_w.col(3).truncate();
+            for child in joint.children() {
+                if !joint_set.contains(&child.index()) { continue }
+                let Some(child_w) = world[child.index()] else { continue };
+                let tail = child_w.col(3).truncate();
+                append_octahedral_bone(head, tail, &mut verts);
+            }
+        }
+    }
+    verts
+}
+
+fn append_octahedral_bone(head: glam::Vec3, tail: glam::Vec3, out: &mut Vec<LineVertex>) {
+    let dir = tail - head;
+    let length = dir.length();
+    if length < 1e-6 { return }
+    let axis = dir / length;
+    let rot = glam::Quat::from_rotation_arc(glam::Vec3::Y, axis);
+
+    let r = 0.1_f32;
+    let h = 0.1_f32;
+    let ring_l = [
+        glam::Vec3::new( r, h,  0.0),
+        glam::Vec3::new(0.0, h,  r),
+        glam::Vec3::new(-r, h,  0.0),
+        glam::Vec3::new(0.0, h, -r),
+    ];
+    let to_world = |v: glam::Vec3| head + rot * (v * length);
+    let head_w = to_world(glam::Vec3::ZERO);
+    let tail_w = to_world(glam::Vec3::Y);
+    let ring_w: [glam::Vec3; 4] = std::array::from_fn(|i| to_world(ring_l[i]));
+
+    let color = [1.0, 0.55, 0.10];
+    let mut edge = |a: glam::Vec3, b: glam::Vec3| {
+        out.push(LineVertex { position: a.to_array(), color });
+        out.push(LineVertex { position: b.to_array(), color });
+    };
+    // Head spokes, ring loop, tail spokes — 12 edges total.
+    for i in 0..4 { edge(head_w, ring_w[i]); }
+    for i in 0..4 { edge(ring_w[i], ring_w[(i + 1) % 4]); }
+    for i in 0..4 { edge(ring_w[i], tail_w); }
+}
+
+fn accumulate_world(node: &gltf::Node, parent: glam::Mat4, out: &mut [Option<glam::Mat4>]) {
+    let local = glam::Mat4::from_cols_array_2d(&node.transform().matrix());
+    let w = parent * local;
+    out[node.index()] = Some(w);
+    for child in node.children() {
+        accumulate_world(&child, w, out);
+    }
+}
+
 pub fn load_scene_tree(path: &str) -> SceneTree {
     let (gltf, _buffers, _) = gltf::import(path).unwrap();
     let scene = gltf.default_scene().or_else(|| gltf.scenes().next())
