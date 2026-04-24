@@ -4,6 +4,7 @@ use eframe::{
 };
 use egui_wgpu::{CallbackResources, CallbackTrait};
 use crate::camera::CameraUniform;
+use crate::mesh::MeshPrimitive;
 use crate::renderer::Resources;
 
 struct ViewportCallback {
@@ -41,7 +42,12 @@ impl CallbackTrait for ViewportCallback {
         let res = resources.get::<Resources>().unwrap();
         render_pass.set_pipeline(&res.pipeline);
         render_pass.set_bind_group(0, &res.uniform_buffer_bind_group, &[]);
-        render_pass.draw(0..36, 0..1);
+
+        for prim in &res.primitives {
+            render_pass.set_vertex_buffer(0, prim.vertex_buffer.slice(..));
+            render_pass.set_index_buffer(prim.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+            render_pass.draw_indexed(0..prim.index_count, 0, 0..1);
+        }
     }
 }
 
@@ -57,17 +63,17 @@ impl Default for App {
         Self {
             roughness: 0.0,
             yaw: 0.0,
-            pitch: 0.3,  // slight downward angle
+            pitch: 0.3,
             radius: 3.0,
         }
     }
 }
 
 impl App {
-    pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
+    pub fn new(cc: &eframe::CreationContext<'_>, mesh_primitives: &[MeshPrimitive]) -> Self {
         let render_state = cc.wgpu_render_state.as_ref().unwrap();
         let device = &render_state.device;
-        let res = Resources::new(device, render_state.target_format.into());
+        let res = Resources::new(device, render_state.target_format.into(), mesh_primitives);
         render_state.renderer.write().callback_resources.insert(res);
         Self::default()
     }
@@ -76,14 +82,12 @@ impl App {
         let (rect, response) =
             ui.allocate_exact_size(ui.available_size(), egui::Sense::drag());
 
-        // Left drag: orbit
         if response.dragged() {
             let delta = response.drag_delta();
             self.yaw   -= delta.x * 0.01;
             self.pitch += delta.y * 0.01;
         }
 
-        // Scroll: zoom
         if response.hovered() {
             let scroll = ui.input(|i| i.smooth_scroll_delta.y);
             self.radius = (self.radius - scroll * 0.01).max(0.5);
@@ -110,7 +114,7 @@ impl eframe::App for App {
             .show_inside(ui, |ui| {
                 egui::ScrollArea::both().show(ui, |ui| {
                     ui.heading("Scene Node");
-                    ui.label("Model 1: Super_long_filename_that_normally_breaks_layout.gltf");
+                    ui.label("Model 1: lumine.glb");
                 });
             });
 
