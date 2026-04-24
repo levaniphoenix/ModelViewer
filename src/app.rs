@@ -2,7 +2,9 @@ use eframe::{
     egui::{self, PaintCallbackInfo},
     wgpu,
 };
+use eframe::wgpu::ShaderModuleDescriptor;
 use egui_wgpu::{CallbackResources, CallbackTrait};
+use crate::renderer::Resources;
 
 struct ViewportCallback;
 
@@ -13,7 +15,10 @@ impl CallbackTrait for ViewportCallback {
         render_pass: &mut wgpu::RenderPass<'static>,
         resources: &CallbackResources,
     ) {
-        // your rendering code here
+        let res = resources.get::<Resources>().unwrap();
+        render_pass.set_pipeline(&res.pipeline);
+        render_pass.set_bind_group(0, &res.uniform_buffer_bind_group, &[]);
+        render_pass.draw(0..3, 0..1);
     }
 }
 
@@ -23,15 +28,15 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
-        // Customize egui here with cc.egui_ctx.set_fonts and cc.egui_ctx.set_global_style.
-        // Restore app state using cc.storage (requires the "persistence" feature).
-        // Use the cc.gl (a glow::Context) to create graphics shaders and buffers that you can use
-        // for e.g. egui::PaintCallback.
+    pub fn new(cc: &eframe::CreationContext<'_>) -> Self { 
+        let render_state = cc.wgpu_render_state.as_ref().unwrap();
+        let device  = &render_state.device;
+        let res = Resources::new(device, render_state.target_format.into());
+        render_state.renderer.write().callback_resources.insert(res);
         Self::default()
     }
 
-    fn render_3d_viewport(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
+    fn render_3d_viewport(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let (rect, response) = ui.allocate_exact_size(ui.available_size(), egui::Sense::drag());
 
         // if response.dragged() {
@@ -49,6 +54,8 @@ impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         egui::Panel::left("scene_panel")
             .resizable(true)
+            .default_size(250.0)
+            .size_range(100.0..=500.0)
             .show_inside(ui, |ui| {
                 egui::ScrollArea::both().show(ui, |ui| {
                     ui.heading("Scene Node");
