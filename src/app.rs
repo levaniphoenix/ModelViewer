@@ -113,8 +113,9 @@ impl App {
 
         let render_state = cc.wgpu_render_state.as_ref().unwrap();
         let device = &render_state.device;
+        let queue = &render_state.queue;
         let res = Resources::new(
-            device, render_state.target_format.into(),
+            device, queue, render_state.target_format.into(),
             mesh_primitives, bones, &materials,
         );
         render_state.renderer.write().callback_resources.insert(res);
@@ -129,6 +130,55 @@ impl App {
             has_bones: !bones.is_empty(),
             materials,
             selected_material: None,
+        }
+    }
+
+    fn handle_pick_texture(&mut self, idx: usize, frame: &eframe::Frame) {
+        let Some(path) = rfd::FileDialog::new()
+            .add_filter("Image", &["png", "jpg", "jpeg"])
+            .pick_file()
+        else { return };
+
+        let img = match image::open(&path) {
+            Ok(img) => img.to_rgba8(),
+            Err(e) => { eprintln!("failed to load {}: {e}", path.display()); return }
+        };
+        let (w, h) = (img.width(), img.height());
+
+        let Some(render_state) = frame.wgpu_render_state() else { return };
+        let device = &render_state.device;
+        let queue = &render_state.queue;
+        let mut renderer = render_state.renderer.write();
+        let Some(res) = renderer.callback_resources.get_mut::<Resources>() else { return };
+        let Some(mat) = res.materials.get_mut(idx) else { return };
+
+        let size = wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 };
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("picked_base_color"),
+            size,
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        queue.write_texture(
+            texture.as_image_copy(),
+            &img,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(w * 4),
+                rows_per_image: Some(h),
+            },
+            size,
+        );
+        mat.texture_view = texture.create_view(&Default::default());
+        mat.texture = texture;
+        mat.rebuild_bind_group(device, &res.material_bind_group_layout, Some("picked_base_color"));
+
+        if let Some(m) = self.materials.get_mut(idx) {
+            m.has_base_color_texture = true;
         }
     }
 
@@ -185,6 +235,7 @@ impl eframe::App for App {
                 });
             });
 
+        let mut pick_texture_for: Option<usize> = None;
         egui::Panel::right("inspector_panel")
             .resizable(true)
             .show_inside(ui, |ui| {
@@ -192,9 +243,16 @@ impl eframe::App for App {
                 ui.separator();
                 egui::ScrollArea::vertical().show(ui, |ui| {
                     if self.left_tab == LeftPanelTab::Materials {
-                        match self.selected_material.and_then(|i| self.materials.get_mut(i)) {
-                            Some(mat) => show_material_inspector(ui, mat),
-                            None => { ui.weak("Select a material"); }
+                        if let Some(idx) = self.selected_material {
+                            if let Some(mat) = self.materials.get_mut(idx) {
+                                if show_material_inspector(ui, mat) {
+                                    pick_texture_for = Some(idx);
+                                }
+                            } else {
+                                ui.weak("Select a material");
+                            }
+                        } else {
+                            ui.weak("Select a material");
                         }
                     } else {
                         ui.add_enabled(
@@ -207,6 +265,9 @@ impl eframe::App for App {
                     }
                 });
             });
+        if let Some(idx) = pick_texture_for {
+            self.handle_pick_texture(idx, frame);
+        }
 
         egui::Panel::bottom("console_panel")
             .resizable(true)
@@ -289,7 +350,8 @@ fn show_materials_tab(
     }
 }
 
-fn show_material_inspector(ui: &mut egui::Ui, mat: &mut Material) {
+fn show_material_inspector(ui: &mut egui::Ui, mat: &mut Material) -> bool {
+    let mut pick_texture = false;
     ui.strong(&mat.name);
     ui.separator();
 
@@ -339,10 +401,19 @@ fn show_material_inspector(ui: &mut egui::Ui, mat: &mut Material) {
     ui.label("Textures");
     let yesno = |b: bool| if b { "yes" } else { "—" };
     egui::Grid::new("material_textures").num_columns(2).striped(true).show(ui, |ui| {
-        ui.label("Base color");         ui.monospace(yesno(mat.has_base_color_texture)); ui.end_row();
+        ui.label("Base color");
+        ui.horizontal(|ui| {
+            ui.monospace(yesno(mat.has_base_color_texture));
+            if ui.button("Pick…").clicked() {
+                pick_texture = true;
+            }
+        });
+        ui.end_row();
         ui.label("Metallic/roughness"); ui.monospace(yesno(mat.has_metallic_roughness_texture)); ui.end_row();
         ui.label("Normal");             ui.monospace(yesno(mat.has_normal_texture)); ui.end_row();
         ui.label("Occlusion");          ui.monospace(yesno(mat.has_occlusion_texture)); ui.end_row();
         ui.label("Emissive");           ui.monospace(yesno(mat.has_emissive_texture)); ui.end_row();
     });
+
+    pick_texture
 }

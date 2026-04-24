@@ -5,6 +5,7 @@ use eframe::wgpu;
 pub struct Vertex {
     pub position: [f32; 3],
     pub normal: [f32; 3],
+    pub uv: [f32; 2],
 }
 
 impl Vertex {
@@ -22,6 +23,11 @@ impl Vertex {
                     format: wgpu::VertexFormat::Float32x3,
                     offset: 12,
                     shader_location: 1, // normal
+                },
+                wgpu::VertexAttribute {
+                    format: wgpu::VertexFormat::Float32x2,
+                    offset: 24,
+                    shader_location: 2, // uv
                 },
             ],
         }
@@ -109,8 +115,12 @@ pub fn load_gltf(path: &str) -> Vec<MeshPrimitive> {
                 .map(|n| n.collect())
                 .unwrap_or_else(|| vec![[0.0, 1.0, 0.0]; positions.len()]);
 
-            let vertices: Vec<Vertex> = positions.iter().zip(normals.iter())
-                .map(|(p, n)| Vertex { position: *p, normal: *n })
+            let uvs: Vec<[f32; 2]> = reader.read_tex_coords(0)
+                .map(|t| t.into_f32().collect())
+                .unwrap_or_else(|| vec![[0.0, 0.0]; positions.len()]);
+
+            let vertices: Vec<Vertex> = positions.iter().zip(normals.iter()).zip(uvs.iter())
+                .map(|((p, n), uv)| Vertex { position: *p, normal: *n, uv: *uv })
                 .collect();
 
             let indices: Vec<u32> = reader.read_indices()

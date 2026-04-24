@@ -18,7 +18,29 @@ pub struct MaterialUniform {
 
 pub struct GpuMaterial {
     pub buffer: wgpu::Buffer,
+    pub texture: wgpu::Texture,
+    pub texture_view: wgpu::TextureView,
+    pub sampler: wgpu::Sampler,
     pub bind_group: wgpu::BindGroup,
+}
+
+impl GpuMaterial {
+    pub fn rebuild_bind_group(
+        &mut self,
+        device: &wgpu::Device,
+        layout: &wgpu::BindGroupLayout,
+        label: Option<&str>,
+    ) {
+        self.bind_group = device.create_bind_group(&BindGroupDescriptor {
+            label,
+            layout,
+            entries: &[
+                BindGroupEntry { binding: 0, resource: self.buffer.as_entire_binding() },
+                BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(&self.texture_view) },
+                BindGroupEntry { binding: 2, resource: wgpu::BindingResource::Sampler(&self.sampler) },
+            ],
+        });
+    }
 }
 
 pub struct GpuPrimitive {
@@ -44,11 +66,13 @@ pub struct Resources {
     pub primitives: Vec<GpuPrimitive>,
     pub materials: Vec<GpuMaterial>,
     pub default_material: GpuMaterial,
+    pub material_bind_group_layout: wgpu::BindGroupLayout,
 }
 
 impl Resources {
     pub fn new(
         device: &wgpu::Device,
+        queue: &wgpu::Queue,
         target_format: ColorTargetState,
         mesh_primitives: &[MeshPrimitive],
         bones: &[LineVertex],
@@ -118,33 +142,84 @@ impl Resources {
 
         let material_bind_group_layout = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
             label: Some("material_bind_group_layout"),
-            entries: &[BindGroupLayoutEntry {
-                binding: 0,
-                visibility: ShaderStages::FRAGMENT,
-                ty: BindingType::Buffer {
-                    ty: BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
+            entries: &[
+                BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: ShaderStages::FRAGMENT,
+                    ty: BindingType::Buffer {
+                        ty: BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
                 },
-                count: None,
-            }],
+                BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: ShaderStages::FRAGMENT,
+                    ty: BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: ShaderStages::FRAGMENT,
+                    ty: BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
         });
 
+        let white_pixel: [u8; 4] = [255, 255, 255, 255];
         let make_gpu_material = |label: &str, base_color: [f32; 4]| -> GpuMaterial {
             let buffer = device.create_buffer_init(&BufferInitDescriptor {
                 label: Some(label),
                 contents: cast_slice(&[MaterialUniform { base_color }]),
                 usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
             });
+            let texture = device.create_texture(&wgpu::TextureDescriptor {
+                label: Some(label),
+                size: wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Rgba8UnormSrgb,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                view_formats: &[],
+            });
+            queue.write_texture(
+                texture.as_image_copy(),
+                &white_pixel,
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(4),
+                    rows_per_image: Some(1),
+                },
+                wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
+            );
+            let texture_view = texture.create_view(&Default::default());
+            let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+                label: Some(label),
+                address_mode_u: wgpu::AddressMode::Repeat,
+                address_mode_v: wgpu::AddressMode::Repeat,
+                address_mode_w: wgpu::AddressMode::Repeat,
+                mag_filter: wgpu::FilterMode::Linear,
+                min_filter: wgpu::FilterMode::Linear,
+                mipmap_filter: wgpu::MipmapFilterMode::Nearest,
+                ..Default::default()
+            });
             let bind_group = device.create_bind_group(&BindGroupDescriptor {
                 label: Some(label),
                 layout: &material_bind_group_layout,
-                entries: &[BindGroupEntry {
-                    binding: 0,
-                    resource: buffer.as_entire_binding(),
-                }],
+                entries: &[
+                    BindGroupEntry { binding: 0, resource: buffer.as_entire_binding() },
+                    BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(&texture_view) },
+                    BindGroupEntry { binding: 2, resource: wgpu::BindingResource::Sampler(&sampler) },
+                ],
             });
-            GpuMaterial { buffer, bind_group }
+            GpuMaterial { buffer, texture, texture_view, sampler, bind_group }
         };
 
         let default_material = make_gpu_material("default_material", [0.8, 0.8, 0.8, 1.0]);
@@ -364,6 +439,7 @@ impl Resources {
             primitives,
             materials: gpu_materials,
             default_material,
+            material_bind_group_layout,
         }
     }
 }

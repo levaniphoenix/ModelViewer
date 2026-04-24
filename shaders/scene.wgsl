@@ -13,28 +13,36 @@ struct Material {
 
 @group(1) @binding(0)
 var<uniform> material : Material;
+@group(1) @binding(1)
+var base_color_texture : texture_2d<f32>;
+@group(1) @binding(2)
+var base_color_sampler : sampler;
 
 struct VsOut {
     @builtin(position) position : vec4<f32>,
     @location(0) world_pos : vec3<f32>,
     @location(1) normal : vec3<f32>,
+    @location(2) uv : vec2<f32>,
 }
 
 @vertex
 fn vs_main(
     @location(0) position : vec3<f32>,
     @location(1) normal : vec3<f32>,
+    @location(2) uv : vec2<f32>,
 ) -> VsOut {
     var out : VsOut;
     out.position = uniforms.view_projection * vec4(position, 1.0);
     out.world_pos = position;
     out.normal = normal;
+    out.uv = uv;
     return out;
 }
 
 @fragment
 fn fs_main(in : VsOut) -> @location(0) vec4<f32> {
-    let base_color = material.base_color.rgb;
+    let sampled = textureSample(base_color_texture, base_color_sampler, in.uv);
+    let base_color = material.base_color.rgb * sampled.rgb;
     let light_color = vec3(1.0, 1.0, 1.0);
     let light_dir = normalize(vec3(1.0, 1.0, 1.0));
     let ambient_strength = 0.15;
@@ -50,5 +58,5 @@ fn fs_main(in : VsOut) -> @location(0) vec4<f32> {
 
     let color = base_color * (ambient_strength + diffuse * light_color)
               + light_color * specular;
-    return vec4(color, material.base_color.a);
+    return vec4(color, material.base_color.a * sampled.a);
 }
