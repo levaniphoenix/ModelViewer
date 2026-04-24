@@ -4,7 +4,7 @@ use eframe::{
 };
 use egui_wgpu::{CallbackResources, CallbackTrait};
 use crate::camera::CameraUniform;
-use crate::mesh::{LineVertex, MeshPrimitive, SceneNode, SceneTree};
+use crate::mesh::{AlphaMode, LineVertex, Material, MeshPrimitive, SceneNode, SceneTree};
 use crate::renderer::Resources;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -83,6 +83,8 @@ pub struct App {
     left_tab: LeftPanelTab,
     show_bones: bool,
     has_bones: bool,
+    materials: Vec<Material>,
+    selected_material: Option<usize>,
 }
 
 impl App {
@@ -91,6 +93,7 @@ impl App {
         mesh_primitives: &[MeshPrimitive],
         bones: &[LineVertex],
         scene_tree: SceneTree,
+        materials: Vec<Material>,
     ) -> Self {
         install_cjk_fallback_font(&cc.egui_ctx);
 
@@ -107,6 +110,8 @@ impl App {
             left_tab: LeftPanelTab::Scene,
             show_bones: false,
             has_bones: !bones.is_empty(),
+            materials,
+            selected_material: None,
         }
     }
 
@@ -155,7 +160,9 @@ impl eframe::App for App {
                     match self.left_tab {
                         LeftPanelTab::Scene => show_scene_tab(ui, &self.scene_tree),
                         LeftPanelTab::Meshes => { ui.label("(not implemented yet)"); }
-                        LeftPanelTab::Materials => { ui.label("(not implemented yet)"); }
+                        LeftPanelTab::Materials => show_materials_tab(
+                            ui, &self.materials, &mut self.selected_material,
+                        ),
                     }
                 });
             });
@@ -165,13 +172,22 @@ impl eframe::App for App {
             .show_inside(ui, |ui| {
                 ui.heading("Properties");
                 ui.separator();
-                ui.add_enabled(
-                    self.has_bones,
-                    egui::Checkbox::new(&mut self.show_bones, "Show bones"),
-                );
-                if !self.has_bones {
-                    ui.weak("(no skin in this glTF)");
-                }
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    if self.left_tab == LeftPanelTab::Materials {
+                        match self.selected_material.and_then(|i| self.materials.get(i)) {
+                            Some(mat) => show_material_inspector(ui, mat),
+                            None => { ui.weak("Select a material"); }
+                        }
+                    } else {
+                        ui.add_enabled(
+                            self.has_bones,
+                            egui::Checkbox::new(&mut self.show_bones, "Show bones"),
+                        );
+                        if !self.has_bones {
+                            ui.weak("(no skin in this glTF)");
+                        }
+                    }
+                });
             });
 
         egui::Panel::bottom("console_panel")
@@ -237,4 +253,86 @@ fn show_node(ui: &mut egui::Ui, node: &SceneNode) {
                 }
             });
     }
+}
+
+fn show_materials_tab(
+    ui: &mut egui::Ui,
+    materials: &[Material],
+    selected: &mut Option<usize>,
+) {
+    if materials.is_empty() {
+        ui.weak("(no materials)");
+        return;
+    }
+    for (i, mat) in materials.iter().enumerate() {
+        if ui.selectable_label(*selected == Some(i), &mat.name).clicked() {
+            *selected = Some(i);
+        }
+    }
+}
+
+fn show_material_inspector(ui: &mut egui::Ui, mat: &Material) {
+    ui.strong(&mat.name);
+    ui.separator();
+
+    let swatch_size = egui::vec2(32.0, 18.0);
+    egui::Grid::new("material_props").num_columns(2).striped(true).show(ui, |ui| {
+        ui.label("Base color");
+        let c = mat.base_color;
+        egui::color_picker::show_color(
+            ui,
+            egui::Color32::from_rgba_unmultiplied(
+                (c[0] * 255.0) as u8, (c[1] * 255.0) as u8,
+                (c[2] * 255.0) as u8, (c[3] * 255.0) as u8,
+            ),
+            swatch_size,
+        );
+        ui.end_row();
+
+        ui.label("Metallic");
+        ui.monospace(format!("{:.3}", mat.metallic));
+        ui.end_row();
+
+        ui.label("Roughness");
+        ui.monospace(format!("{:.3}", mat.roughness));
+        ui.end_row();
+
+        ui.label("Emissive");
+        let e = mat.emissive;
+        egui::color_picker::show_color(
+            ui,
+            egui::Color32::from_rgb(
+                (e[0].clamp(0.0, 1.0) * 255.0) as u8,
+                (e[1].clamp(0.0, 1.0) * 255.0) as u8,
+                (e[2].clamp(0.0, 1.0) * 255.0) as u8,
+            ),
+            swatch_size,
+        );
+        ui.end_row();
+
+        ui.label("Alpha mode");
+        ui.monospace(format!("{:?}", mat.alpha_mode));
+        ui.end_row();
+
+        if matches!(mat.alpha_mode, AlphaMode::Mask) {
+            ui.label("Alpha cutoff");
+            ui.monospace(format!("{:.3}", mat.alpha_cutoff));
+            ui.end_row();
+        }
+
+        ui.label("Double sided");
+        ui.monospace(mat.double_sided.to_string());
+        ui.end_row();
+    });
+
+    ui.separator();
+    ui.label("Textures");
+    let yesno = |b: bool| if b { "yes" } else { "—" };
+    egui::Grid::new("material_textures").num_columns(2).striped(true).show(ui, |ui| {
+        ui.label("Base color");         ui.monospace(yesno(mat.has_base_color_texture)); ui.end_row();
+        ui.label("Metallic/roughness"); ui.monospace(yesno(mat.has_metallic_roughness_texture)); ui.end_row();
+        ui.label("Normal");             ui.monospace(yesno(mat.has_normal_texture)); ui.end_row();
+        ui.label("Occlusion");          ui.monospace(yesno(mat.has_occlusion_texture)); ui.end_row();
+        ui.label("Emissive");           ui.monospace(yesno(mat.has_emissive_texture)); ui.end_row();
+    });
 }

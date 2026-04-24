@@ -124,6 +124,53 @@ pub fn load_gltf(path: &str) -> Vec<MeshPrimitive> {
     primitives
 }
 
+#[derive(Clone, Copy, Debug)]
+pub enum AlphaMode { Opaque, Mask, Blend }
+
+pub struct Material {
+    pub name: String,
+    pub base_color: [f32; 4],
+    pub metallic: f32,
+    pub roughness: f32,
+    pub emissive: [f32; 3],
+    pub alpha_mode: AlphaMode,
+    pub alpha_cutoff: f32,
+    pub double_sided: bool,
+    pub has_base_color_texture: bool,
+    pub has_metallic_roughness_texture: bool,
+    pub has_normal_texture: bool,
+    pub has_occlusion_texture: bool,
+    pub has_emissive_texture: bool,
+}
+
+pub fn load_materials(path: &str) -> Vec<Material> {
+    let (gltf, _buffers, _) = gltf::import(path).unwrap();
+    gltf.materials().enumerate().map(|(i, mat)| {
+        let pbr = mat.pbr_metallic_roughness();
+        let alpha_mode = match mat.alpha_mode() {
+            gltf::material::AlphaMode::Opaque => AlphaMode::Opaque,
+            gltf::material::AlphaMode::Mask => AlphaMode::Mask,
+            gltf::material::AlphaMode::Blend => AlphaMode::Blend,
+        };
+        Material {
+            name: mat.name().map(|s| s.to_string())
+                .unwrap_or_else(|| format!("Material {i}")),
+            base_color: pbr.base_color_factor(),
+            metallic: pbr.metallic_factor(),
+            roughness: pbr.roughness_factor(),
+            emissive: mat.emissive_factor(),
+            alpha_mode,
+            alpha_cutoff: mat.alpha_cutoff().unwrap_or(0.5),
+            double_sided: mat.double_sided(),
+            has_base_color_texture: pbr.base_color_texture().is_some(),
+            has_metallic_roughness_texture: pbr.metallic_roughness_texture().is_some(),
+            has_normal_texture: mat.normal_texture().is_some(),
+            has_occlusion_texture: mat.occlusion_texture().is_some(),
+            has_emissive_texture: mat.emissive_texture().is_some(),
+        }
+    }).collect()
+}
+
 pub struct SceneNode {
     pub name: String,
     pub children: Vec<SceneNode>,

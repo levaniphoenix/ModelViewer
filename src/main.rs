@@ -6,7 +6,11 @@ fn main() -> eframe::Result<()> {
     let primitives = mesh::load_gltf(path);
     let scene_tree = mesh::load_scene_tree(path);
     let bones = mesh::load_bones(path);
-    println!("Loaded {} primitives, {} bones", primitives.len(), bones.len() / 24);
+    let materials = mesh::load_materials(path);
+    println!(
+        "Loaded {} primitives, {} bones, {} materials",
+        primitives.len(), bones.len() / 24, materials.len(),
+    );
 
     let options = eframe::NativeOptions {
         depth_buffer: 32,
@@ -15,6 +19,6 @@ fn main() -> eframe::Result<()> {
     eframe::run_native(
         "3D Model Viewer",
         options,
-        Box::new(move |cc| Ok(Box::new(App::new(cc, &primitives, &bones, scene_tree)))),
+        Box::new(move |cc| Ok(Box::new(App::new(cc, &primitives, &bones, scene_tree, materials)))),
     )
 }
