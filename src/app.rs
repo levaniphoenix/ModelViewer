@@ -269,13 +269,6 @@ impl eframe::App for App {
             self.handle_pick_texture(idx, frame);
         }
 
-        egui::Panel::bottom("console_panel")
-            .resizable(true)
-            .size_range(100.0..=200.0)
-            .show_inside(ui, |ui| {
-                ui.label("System loaded successfully.");
-            });
-
         egui::CentralPanel::default().show_inside(ui, |ui| {
             self.render_3d_viewport(ui, frame);
         });
