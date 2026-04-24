@@ -46,12 +46,17 @@ impl Camera{
 #[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct CameraUniform{
     view_projection : [[f32;4]; 4],
+    inv_view_projection : [[f32;4]; 4],
+    camera_pos : [f32; 4],
 }
 
 impl CameraUniform{
     pub fn new(camera : &Camera) -> Self{
+        let vp = camera.build_view_projection_matrix();
         Self{
-            view_projection : camera.build_view_projection_matrix().to_cols_array_2d(),
+            view_projection : vp.to_cols_array_2d(),
+            inv_view_projection : vp.inverse().to_cols_array_2d(),
+            camera_pos : [camera.position.x, camera.position.y, camera.position.z, 1.0],
         }
     }
-} 
+}

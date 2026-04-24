@@ -40,14 +40,21 @@ impl CallbackTrait for ViewportCallback {
         resources: &CallbackResources,
     ) {
         let res = resources.get::<Resources>().unwrap();
-        render_pass.set_pipeline(&res.pipeline);
         render_pass.set_bind_group(0, &res.uniform_buffer_bind_group, &[]);
 
+        render_pass.set_pipeline(&res.sky_pipeline);
+        render_pass.draw(0..3, 0..1);
+
+        render_pass.set_pipeline(&res.pipeline);
         for prim in &res.primitives {
             render_pass.set_vertex_buffer(0, prim.vertex_buffer.slice(..));
             render_pass.set_index_buffer(prim.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
             render_pass.draw_indexed(0..prim.index_count, 0, 0..1);
         }
+
+        render_pass.set_pipeline(&res.grid_pipeline);
+        render_pass.set_vertex_buffer(0, res.grid_vertex_buffer.slice(..));
+        render_pass.draw(0..res.grid_vertex_count, 0..1);
     }
 }
 

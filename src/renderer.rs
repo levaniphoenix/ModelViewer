@@ -8,7 +8,7 @@ use eframe::wgpu::{
 use eframe::wgpu::util::{BufferInitDescriptor, DeviceExt};
 use glam::Vec3;
 use crate::camera::{Camera, CameraUniform};
-use crate::mesh::{MeshPrimitive, Vertex};
+use crate::mesh::{build_grid, LineVertex, MeshPrimitive, Vertex};
 
 pub struct GpuPrimitive {
     pub vertex_buffer: wgpu::Buffer,
@@ -19,6 +19,10 @@ pub struct GpuPrimitive {
 pub struct Resources {
     pub shader: ShaderModule,
     pub pipeline: RenderPipeline,
+    pub sky_pipeline: RenderPipeline,
+    pub grid_pipeline: RenderPipeline,
+    pub grid_vertex_buffer: wgpu::Buffer,
+    pub grid_vertex_count: u32,
     pub uniform_buffer: wgpu::Buffer,
     pub uniform_buffer_bind_group: wgpu::BindGroup,
     pub camera: Camera,
@@ -107,13 +111,93 @@ impl Resources {
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
                 entry_point: Some("fs_main"),
-                targets: &[Some(target_format)],
+                targets: &[Some(target_format.clone())],
                 compilation_options: Default::default(),
             }),
             primitive: wgpu::PrimitiveState {
                 topology: wgpu::PrimitiveTopology::TriangleList,
                 front_face: wgpu::FrontFace::Ccw,
                 cull_mode: None, // no culling for now so we see everything
+                ..Default::default()
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: wgpu::TextureFormat::Depth32Float,
+                depth_write_enabled: Some(true),
+                depth_compare: Some(wgpu::CompareFunction::Less),
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            }),
+            multisample: wgpu::MultisampleState::default(),
+            cache: None,
+            multiview_mask: None,
+        });
+
+        let sky_shader = device.create_shader_module(ShaderModuleDescriptor {
+            label: Some("sky shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/sky.wgsl").into()),
+        });
+
+        let sky_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("sky_pipeline"),
+            layout: Some(&render_pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &sky_shader,
+                entry_point: Some("vs_main"),
+                buffers: &[],
+                compilation_options: Default::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &sky_shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(target_format.clone())],
+                compilation_options: Default::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                ..Default::default()
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: wgpu::TextureFormat::Depth32Float,
+                depth_write_enabled: Some(false),
+                depth_compare: Some(wgpu::CompareFunction::Always),
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            }),
+            multisample: wgpu::MultisampleState::default(),
+            cache: None,
+            multiview_mask: None,
+        });
+
+        let grid_shader = device.create_shader_module(ShaderModuleDescriptor {
+            label: Some("grid shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/grid.wgsl").into()),
+        });
+
+        let grid_vertices = build_grid(10);
+        let grid_vertex_count = grid_vertices.len() as u32;
+        let grid_vertex_buffer = device.create_buffer_init(&BufferInitDescriptor {
+            label: Some("grid_vertex_buffer"),
+            contents: cast_slice(&grid_vertices),
+            usage: BufferUsages::VERTEX,
+        });
+
+        let grid_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("grid_pipeline"),
+            layout: Some(&render_pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &grid_shader,
+                entry_point: Some("vs_main"),
+                buffers: &[LineVertex::buffer_layout()],
+                compilation_options: Default::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &grid_shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(target_format)],
+                compilation_options: Default::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::LineList,
                 ..Default::default()
             },
             depth_stencil: Some(wgpu::DepthStencilState {
@@ -146,6 +230,17 @@ impl Resources {
             }
         }).collect();
 
-        Self { shader, pipeline, uniform_buffer, uniform_buffer_bind_group, camera, primitives }
+        Self {
+            shader,
+            pipeline,
+            sky_pipeline,
+            grid_pipeline,
+            grid_vertex_buffer,
+            grid_vertex_count,
+            uniform_buffer,
+            uniform_buffer_bind_group,
+            camera,
+            primitives,
+        }
     }
 }
