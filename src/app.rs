@@ -6,7 +6,7 @@ use eframe::{
 };
 use egui_wgpu::{CallbackResources, CallbackTrait, RenderState};
 use crate::camera::CameraUniform;
-use crate::mesh::{AlphaMode, LineVertex, Material, MeshPrimitive, SceneNode, SceneTree};
+use crate::mesh::{AlphaMode, LineVertex, Material, MeshInfo, MeshPrimitive, SceneNode, SceneTree};
 use crate::renderer::{MaterialUniform, Resources};
 use crate::state::{self, MaterialState, ViewerState};
 
@@ -24,6 +24,7 @@ struct ViewportCallback {
     aspect: f32,
     show_bones: bool,
     material_colors: Vec<[f32; 4]>,
+    primitive_visible: Vec<bool>,
 }
 
 impl CallbackTrait for ViewportCallback {
@@ -67,7 +68,10 @@ impl CallbackTrait for ViewportCallback {
         render_pass.draw(0..3, 0..1);
 
         render_pass.set_pipeline(&res.pipeline);
-        for prim in &res.primitives {
+        for (i, prim) in res.primitives.iter().enumerate() {
+            if !self.primitive_visible.get(i).copied().unwrap_or(true) {
+                continue;
+            }
             let mat = prim.material
                 .and_then(|i| res.materials.get(i))
                 .unwrap_or(&res.default_material);
@@ -102,6 +106,13 @@ pub struct App {
     has_bones: bool,
     materials: Vec<Material>,
     selected_material: Option<usize>,
+    meshes: Vec<MeshInfo>,
+    primitive_visible: Vec<bool>,
+    selected_primitive: Option<usize>,
+}
+
+fn primitive_key(mesh_name: &str, prim_name: &str) -> String {
+    format!("{mesh_name}/{prim_name}")
 }
 
 impl App {
@@ -111,6 +122,7 @@ impl App {
         bones: &[LineVertex],
         scene_tree: SceneTree,
         mut materials: Vec<Material>,
+        meshes: Vec<MeshInfo>,
     ) -> Self {
         install_cjk_fallback_font(&cc.egui_ctx);
 
@@ -150,6 +162,20 @@ impl App {
             .map(|s| (s.yaw, s.pitch, s.radius, s.show_bones))
             .unwrap_or((0.0, 0.3, 3.0, false));
 
+        let mut primitive_visible = vec![true; mesh_primitives.len()];
+        if let Some(s) = &saved {
+            let hidden: std::collections::HashSet<&String> = s.hidden_primitives.iter().collect();
+            for mesh in &meshes {
+                for prim in &mesh.primitives {
+                    if hidden.contains(&primitive_key(&mesh.name, &prim.name)) {
+                        if let Some(v) = primitive_visible.get_mut(prim.global_index) {
+                            *v = false;
+                        }
+                    }
+                }
+            }
+        }
+
         Self {
             roughness: 0.0,
             yaw,
@@ -161,6 +187,9 @@ impl App {
             has_bones: !bones.is_empty(),
             materials,
             selected_material: None,
+            meshes,
+            primitive_visible,
+            selected_primitive: None,
         }
     }
 
@@ -171,12 +200,23 @@ impl App {
                 base_color_texture_path: m.base_color_texture_path.clone(),
             })
         }).collect();
+        let mut hidden_primitives = Vec::new();
+        for mesh in &self.meshes {
+            for prim in &mesh.primitives {
+                let visible = self.primitive_visible
+                    .get(prim.global_index).copied().unwrap_or(true);
+                if !visible {
+                    hidden_primitives.push(primitive_key(&mesh.name, &prim.name));
+                }
+            }
+        }
         ViewerState {
             yaw: self.yaw,
             pitch: self.pitch,
             radius: self.radius,
             show_bones: self.show_bones,
             materials,
+            hidden_primitives,
         }
     }
 
@@ -220,6 +260,7 @@ impl App {
                 aspect: rect.width() / rect.height(),
                 show_bones: self.show_bones,
                 material_colors: self.materials.iter().map(|m| m.base_color).collect(),
+                primitive_visible: self.primitive_visible.clone(),
             },
         ));
     }
@@ -291,7 +332,12 @@ impl eframe::App for App {
                 egui::ScrollArea::both().show(ui, |ui| {
                     match self.left_tab {
                         LeftPanelTab::Scene => show_scene_tab(ui, &self.scene_tree),
-                        LeftPanelTab::Meshes => { ui.label("(not implemented yet)"); }
+                        LeftPanelTab::Meshes => show_meshes_tab(
+                            ui,
+                            &self.meshes,
+                            &mut self.primitive_visible,
+                            &mut self.selected_primitive,
+                        ),
                         LeftPanelTab::Materials => show_materials_tab(
                             ui, &self.materials, &mut self.selected_material,
                         ),
@@ -300,35 +346,52 @@ impl eframe::App for App {
             });
 
         let mut pick_texture_for: Option<usize> = None;
+        let mut jump_to_material: Option<usize> = None;
         egui::Panel::right("inspector_panel")
             .resizable(true)
             .show_inside(ui, |ui| {
                 ui.heading("Properties");
                 ui.separator();
                 egui::ScrollArea::vertical().show(ui, |ui| {
-                    if self.left_tab == LeftPanelTab::Materials {
-                        if let Some(idx) = self.selected_material {
-                            if let Some(mat) = self.materials.get_mut(idx) {
-                                if show_material_inspector(ui, mat) {
-                                    pick_texture_for = Some(idx);
+                    match self.left_tab {
+                        LeftPanelTab::Materials => {
+                            if let Some(idx) = self.selected_material {
+                                if let Some(mat) = self.materials.get_mut(idx) {
+                                    if show_material_inspector(ui, mat) {
+                                        pick_texture_for = Some(idx);
+                                    }
+                                } else {
+                                    ui.weak("Select a material");
                                 }
                             } else {
                                 ui.weak("Select a material");
                             }
-                        } else {
-                            ui.weak("Select a material");
                         }
-                    } else {
-                        ui.add_enabled(
-                            self.has_bones,
-                            egui::Checkbox::new(&mut self.show_bones, "Show bones"),
-                        );
-                        if !self.has_bones {
-                            ui.weak("(no skin in this glTF)");
+                        LeftPanelTab::Meshes => {
+                            jump_to_material = show_mesh_inspector(
+                                ui,
+                                &self.meshes,
+                                &self.materials,
+                                &mut self.primitive_visible,
+                                self.selected_primitive,
+                            );
+                        }
+                        LeftPanelTab::Scene => {
+                            ui.add_enabled(
+                                self.has_bones,
+                                egui::Checkbox::new(&mut self.show_bones, "Show bones"),
+                            );
+                            if !self.has_bones {
+                                ui.weak("(no skin in this glTF)");
+                            }
                         }
                     }
                 });
             });
+        if let Some(idx) = jump_to_material {
+            self.selected_material = Some(idx);
+            self.left_tab = LeftPanelTab::Materials;
+        }
         if let Some(idx) = pick_texture_for {
             self.handle_pick_texture(idx, frame);
         }
@@ -393,6 +456,117 @@ fn show_node(ui: &mut egui::Ui, node: &SceneNode) {
                 }
             });
     }
+}
+
+fn show_meshes_tab(
+    ui: &mut egui::Ui,
+    meshes: &[MeshInfo],
+    visible: &mut [bool],
+    selected: &mut Option<usize>,
+) {
+    if meshes.is_empty() {
+        ui.weak("(no meshes)");
+        return;
+    }
+
+    ui.horizontal(|ui| {
+        if ui.small_button("Show all").clicked() {
+            for v in visible.iter_mut() { *v = true; }
+        }
+        if ui.small_button("Hide all").clicked() {
+            for v in visible.iter_mut() { *v = false; }
+        }
+    });
+    ui.separator();
+
+    for (mi, mesh) in meshes.iter().enumerate() {
+        let header = format!("{} ({})", mesh.name, mesh.primitives.len());
+        egui::CollapsingHeader::new(header)
+            .id_salt(("mesh", mi))
+            .default_open(true)
+            .show(ui, |ui| {
+                for prim in &mesh.primitives {
+                    let row = ui.horizontal(|ui| {
+                        if let Some(v) = visible.get_mut(prim.global_index) {
+                            ui.checkbox(v, "");
+                        }
+                        ui.selectable_label(
+                            *selected == Some(prim.global_index),
+                            &prim.name,
+                        )
+                    });
+                    if row.inner.clicked() {
+                        *selected = Some(prim.global_index);
+                    }
+                }
+            });
+    }
+}
+
+fn show_mesh_inspector(
+    ui: &mut egui::Ui,
+    meshes: &[MeshInfo],
+    materials: &[Material],
+    visible: &mut [bool],
+    selected: Option<usize>,
+) -> Option<usize> {
+    let Some(global) = selected else {
+        ui.weak("Select a primitive");
+        return None;
+    };
+    let Some((mesh, prim)) = meshes.iter().find_map(|m| {
+        m.primitives.iter().find(|p| p.global_index == global).map(|p| (m, p))
+    }) else {
+        ui.weak("Select a primitive");
+        return None;
+    };
+
+    ui.strong(&prim.name);
+    ui.weak(format!("in mesh “{}”", mesh.name));
+    ui.separator();
+
+    let mut jump = None;
+    egui::Grid::new("mesh_prim_props").num_columns(2).striped(true).show(ui, |ui| {
+        ui.label("Vertices");
+        ui.monospace(format_count(prim.vertex_count));
+        ui.end_row();
+
+        ui.label("Triangles");
+        ui.monospace(format_count(prim.triangle_count));
+        ui.end_row();
+
+        ui.label("Material");
+        match prim.material.and_then(|i| materials.get(i).map(|m| (i, m))) {
+            Some((i, mat)) => {
+                if ui.link(&mat.name).on_hover_text("Open in Materials tab").clicked() {
+                    jump = Some(i);
+                }
+            }
+            None => { ui.weak("(default)"); }
+        }
+        ui.end_row();
+
+        ui.label("Visible");
+        if let Some(v) = visible.get_mut(global) {
+            ui.checkbox(v, "");
+        }
+        ui.end_row();
+    });
+
+    jump
+}
+
+fn format_count(n: usize) -> String {
+    let s = n.to_string();
+    let bytes = s.as_bytes();
+    let mut out = String::with_capacity(s.len() + s.len() / 3);
+    for (i, b) in bytes.iter().enumerate() {
+        if i > 0 && (bytes.len() - i) % 3 == 0 {
+            out.push(',');
+        }
+        out.push(*b as char);
+    }
+    out
 }
 
 fn show_materials_tab(

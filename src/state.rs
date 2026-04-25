@@ -11,6 +11,8 @@ pub struct ViewerState {
     pub show_bones: bool,
     #[serde(default)]
     pub materials: HashMap<String, MaterialState>,
+    #[serde(default)]
+    pub hidden_primitives: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]

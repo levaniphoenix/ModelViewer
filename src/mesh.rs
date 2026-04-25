@@ -187,6 +187,49 @@ pub fn load_materials(path: &str) -> Vec<Material> {
     }).collect()
 }
 
+pub struct MeshInfo {
+    pub name: String,
+    pub primitives: Vec<MeshPrimInfo>,
+}
+
+pub struct MeshPrimInfo {
+    pub global_index: usize,
+    pub name: String,
+    pub vertex_count: usize,
+    pub triangle_count: usize,
+    pub material: Option<usize>,
+}
+
+pub fn load_mesh_list(path: &str) -> Vec<MeshInfo> {
+    let (gltf, buffers, _) = gltf::import(path).unwrap();
+    let mut meshes = Vec::new();
+    let mut global = 0usize;
+    for mesh in gltf.meshes() {
+        let mesh_name = mesh.name().unwrap_or("Mesh").to_string();
+        let mut prims = Vec::new();
+        for (i, primitive) in mesh.primitives().enumerate() {
+            let reader = primitive.reader(|buffer| Some(&buffers[buffer.index()]));
+            let vertex_count = reader.read_positions().map(|p| p.count()).unwrap_or(0);
+            let index_count = reader.read_indices()
+                .map(|idx| idx.into_u32().count())
+                .unwrap_or(0);
+            let name = primitive.material().name()
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| format!("Primitive {i}"));
+            prims.push(MeshPrimInfo {
+                global_index: global,
+                name,
+                vertex_count,
+                triangle_count: index_count / 3,
+                material: primitive.material().index(),
+            });
+            global += 1;
+        }
+        meshes.push(MeshInfo { name: mesh_name, primitives: prims });
+    }
+    meshes
+}
+
 pub struct SceneNode {
     pub name: String,
     pub children: Vec<SceneNode>,
