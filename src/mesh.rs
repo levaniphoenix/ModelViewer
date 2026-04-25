@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use eframe::wgpu;
 
 #[repr(C)]
@@ -153,6 +155,7 @@ pub struct Material {
     pub has_normal_texture: bool,
     pub has_occlusion_texture: bool,
     pub has_emissive_texture: bool,
+    pub base_color_texture_path: Option<PathBuf>,
 }
 
 pub fn load_materials(path: &str) -> Vec<Material> {
@@ -179,6 +182,7 @@ pub fn load_materials(path: &str) -> Vec<Material> {
             has_normal_texture: mat.normal_texture().is_some(),
             has_occlusion_texture: mat.occlusion_texture().is_some(),
             has_emissive_texture: mat.emissive_texture().is_some(),
+            base_color_texture_path: None,
         }
     }).collect()
 }

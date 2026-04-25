@@ -1,11 +1,14 @@
+use std::path::Path;
+
 use eframe::{
     egui::{self, PaintCallbackInfo},
     wgpu,
 };
-use egui_wgpu::{CallbackResources, CallbackTrait};
+use egui_wgpu::{CallbackResources, CallbackTrait, RenderState};
 use crate::camera::CameraUniform;
 use crate::mesh::{AlphaMode, LineVertex, Material, MeshPrimitive, SceneNode, SceneTree};
 use crate::renderer::{MaterialUniform, Resources};
+use crate::state::{self, MaterialState, ViewerState};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum LeftPanelTab {
@@ -107,9 +110,19 @@ impl App {
         mesh_primitives: &[MeshPrimitive],
         bones: &[LineVertex],
         scene_tree: SceneTree,
-        materials: Vec<Material>,
+        mut materials: Vec<Material>,
     ) -> Self {
         install_cjk_fallback_font(&cc.egui_ctx);
+
+        let saved = state::load();
+
+        if let Some(s) = &saved {
+            for mat in materials.iter_mut() {
+                if let Some(ms) = s.materials.get(&mat.name) {
+                    mat.base_color = ms.base_color;
+                }
+            }
+        }
 
         let render_state = cc.wgpu_render_state.as_ref().unwrap();
         let device = &render_state.device;
@@ -119,17 +132,51 @@ impl App {
             mesh_primitives, bones, &materials,
         );
         render_state.renderer.write().callback_resources.insert(res);
+
+        if let Some(s) = &saved {
+            for i in 0..materials.len() {
+                let path = s.materials.get(&materials[i].name)
+                    .and_then(|ms| ms.base_color_texture_path.clone());
+                if let Some(path) = path {
+                    if let Err(e) = apply_base_color_texture(render_state, &mut materials, i, &path) {
+                        eprintln!("could not restore texture for '{}': {e}", materials[i].name);
+                    }
+                }
+            }
+        }
+
+        let (yaw, pitch, radius, show_bones) = saved
+            .as_ref()
+            .map(|s| (s.yaw, s.pitch, s.radius, s.show_bones))
+            .unwrap_or((0.0, 0.3, 3.0, false));
+
         Self {
             roughness: 0.0,
-            yaw: 0.0,
-            pitch: 0.3,
-            radius: 3.0,
+            yaw,
+            pitch,
+            radius,
             scene_tree,
             left_tab: LeftPanelTab::Scene,
-            show_bones: false,
+            show_bones: show_bones && !bones.is_empty(),
             has_bones: !bones.is_empty(),
             materials,
             selected_material: None,
+        }
+    }
+
+    fn snapshot_state(&self) -> ViewerState {
+        let materials = self.materials.iter().map(|m| {
+            (m.name.clone(), MaterialState {
+                base_color: m.base_color,
+                base_color_texture_path: m.base_color_texture_path.clone(),
+            })
+        }).collect();
+        ViewerState {
+            yaw: self.yaw,
+            pitch: self.pitch,
+            radius: self.radius,
+            show_bones: self.show_bones,
+            materials,
         }
     }
 
@@ -139,46 +186,13 @@ impl App {
             .pick_file()
         else { return };
 
-        let img = match image::open(&path) {
-            Ok(img) => img.to_rgba8(),
-            Err(e) => { eprintln!("failed to load {}: {e}", path.display()); return }
-        };
-        let (w, h) = (img.width(), img.height());
-
         let Some(render_state) = frame.wgpu_render_state() else { return };
-        let device = &render_state.device;
-        let queue = &render_state.queue;
-        let mut renderer = render_state.renderer.write();
-        let Some(res) = renderer.callback_resources.get_mut::<Resources>() else { return };
-        let Some(mat) = res.materials.get_mut(idx) else { return };
-
-        let size = wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 };
-        let texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("picked_base_color"),
-            size,
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8UnormSrgb,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-            view_formats: &[],
-        });
-        queue.write_texture(
-            texture.as_image_copy(),
-            &img,
-            wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(w * 4),
-                rows_per_image: Some(h),
-            },
-            size,
-        );
-        mat.texture_view = texture.create_view(&Default::default());
-        mat.texture = texture;
-        mat.rebuild_bind_group(device, &res.material_bind_group_layout, Some("picked_base_color"));
-
+        if let Err(e) = apply_base_color_texture(render_state, &mut self.materials, idx, &path) {
+            eprintln!("failed to load {}: {e}", path.display());
+            return;
+        }
         if let Some(m) = self.materials.get_mut(idx) {
-            m.has_base_color_texture = true;
+            m.base_color_texture_path = Some(path);
         }
     }
 
@@ -209,6 +223,56 @@ impl App {
             },
         ));
     }
+}
+
+fn apply_base_color_texture(
+    render_state: &RenderState,
+    materials: &mut [Material],
+    idx: usize,
+    path: &Path,
+) -> Result<(), String> {
+    let img = image::open(path)
+        .map_err(|e| e.to_string())?
+        .to_rgba8();
+    let (w, h) = (img.width(), img.height());
+
+    let device = &render_state.device;
+    let queue = &render_state.queue;
+    let mut renderer = render_state.renderer.write();
+    let res = renderer.callback_resources.get_mut::<Resources>()
+        .ok_or_else(|| "renderer resources not initialized".to_string())?;
+    let mat = res.materials.get_mut(idx)
+        .ok_or_else(|| format!("no GPU material at index {idx}"))?;
+
+    let size = wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 };
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("picked_base_color"),
+        size,
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba8UnormSrgb,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+    queue.write_texture(
+        texture.as_image_copy(),
+        &img,
+        wgpu::TexelCopyBufferLayout {
+            offset: 0,
+            bytes_per_row: Some(w * 4),
+            rows_per_image: Some(h),
+        },
+        size,
+    );
+    mat.texture_view = texture.create_view(&Default::default());
+    mat.texture = texture;
+    mat.rebuild_bind_group(device, &res.material_bind_group_layout, Some("picked_base_color"));
+
+    if let Some(m) = materials.get_mut(idx) {
+        m.has_base_color_texture = true;
+    }
+    Ok(())
 }
 
 impl eframe::App for App {
@@ -272,6 +336,10 @@ impl eframe::App for App {
         egui::CentralPanel::default().show_inside(ui, |ui| {
             self.render_3d_viewport(ui, frame);
         });
+    }
+
+    fn on_exit(&mut self) {
+        state::save(&self.snapshot_state());
     }
 }
 
