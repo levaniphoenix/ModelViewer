@@ -1,4 +1,5 @@
 use std::path::Path;
+use std::time::{Duration, Instant};
 
 use eframe::{
     egui::{self, PaintCallbackInfo},
@@ -109,6 +110,8 @@ pub struct App {
     meshes: Vec<MeshInfo>,
     primitive_visible: Vec<bool>,
     selected_primitive: Option<usize>,
+    last_saved: Option<ViewerState>,
+    last_save_check: Instant,
 }
 
 fn primitive_key(mesh_name: &str, prim_name: &str) -> String {
@@ -190,6 +193,21 @@ impl App {
             meshes,
             primitive_visible,
             selected_primitive: None,
+            last_saved: saved,
+            last_save_check: Instant::now(),
+        }
+    }
+
+    fn maybe_save(&mut self) {
+        let now = Instant::now();
+        if now.duration_since(self.last_save_check) < Duration::from_millis(500) {
+            return;
+        }
+        self.last_save_check = now;
+        let current = self.snapshot_state();
+        if self.last_saved.as_ref() != Some(&current) {
+            state::save(&current);
+            self.last_saved = Some(current);
         }
     }
 
@@ -399,6 +417,8 @@ impl eframe::App for App {
         egui::CentralPanel::default().show_inside(ui, |ui| {
             self.render_3d_viewport(ui, frame);
         });
+
+        self.maybe_save();
     }
 
     fn on_exit(&mut self) {

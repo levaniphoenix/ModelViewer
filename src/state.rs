@@ -3,7 +3,7 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, PartialEq)]
 pub struct ViewerState {
     pub yaw: f32,
     pub pitch: f32,
@@ -15,7 +15,7 @@ pub struct ViewerState {
     pub hidden_primitives: Vec<String>,
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, PartialEq)]
 pub struct MaterialState {
     pub base_color: [f32; 4],
     #[serde(default)]
