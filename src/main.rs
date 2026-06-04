@@ -2,15 +2,15 @@ use model_viewer::App;
 use model_viewer::mesh;
 
 fn main() -> eframe::Result<()> {
-    let path = "scenes/lumine.glb";
-    let primitives = mesh::load_gltf(path);
-    let scene_tree = mesh::load_scene_tree(path);
-    let bones = mesh::load_bones(path);
-    let materials = mesh::load_materials(path);
-    let meshes = mesh::load_mesh_list(path);
+    let path = std::env::args()
+        .nth(1)
+        .unwrap_or_else(|| "scenes/purah.fbx".to_string());
+    let model = mesh::load_model(&path);
     println!(
-        "Loaded {} primitives, {} bones, {} materials",
-        primitives.len(), bones.len() / 24, materials.len(),
+        "Loaded {} primitives, {} bones, {} materials from {path}",
+        model.primitives.len(),
+        model.bones.len() / 24,
+        model.materials.len(),
     );
 
     let options = eframe::NativeOptions {
@@ -20,8 +20,15 @@ fn main() -> eframe::Result<()> {
     eframe::run_native(
         "3D Model Viewer",
         options,
-        Box::new(move |cc| Ok(Box::new(
-            App::new(cc, &primitives, &bones, scene_tree, materials, meshes)
-        ))),
+        Box::new(move |cc| {
+            Ok(Box::new(App::new(
+                cc,
+                &model.primitives,
+                &model.bones,
+                model.scene_tree,
+                model.materials,
+                model.meshes,
+            )))
+        }),
     )
 }

@@ -200,6 +200,33 @@ pub struct MeshPrimInfo {
     pub material: Option<usize>,
 }
 
+pub struct LoadedModel {
+    pub primitives: Vec<MeshPrimitive>,
+    pub scene_tree: SceneTree,
+    pub bones: Vec<LineVertex>,
+    pub materials: Vec<Material>,
+    pub meshes: Vec<MeshInfo>,
+}
+
+pub fn load_model(path: &str) -> LoadedModel {
+    let ext = std::path::Path::new(path)
+        .extension()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    if ext == "fbx" {
+        crate::fbx::load_fbx_all(path)
+    } else {
+        LoadedModel {
+            primitives: load_gltf(path),
+            scene_tree: load_scene_tree(path),
+            bones: load_bones(path),
+            materials: load_materials(path),
+            meshes: load_mesh_list(path),
+        }
+    }
+}
+
 pub fn load_mesh_list(path: &str) -> Vec<MeshInfo> {
     let (gltf, buffers, _) = gltf::import(path).unwrap();
     let mut meshes = Vec::new();
